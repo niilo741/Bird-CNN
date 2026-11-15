@@ -73,51 +73,56 @@ def mark_done(xc_id):
         f.write(f"{xc_id}\n")
 
 
-df = pd.read_csv(input_metadata)
-done = load_done_ids()
-todo = df[~df["xc_id"].astype(str).isin(done)]
-print(f"{len(todo)} new recordings to process ({len(df) - len(todo)} already done).")
+def main():
+    df = pd.read_csv(input_metadata)
+    done = load_done_ids()
+    todo = df[~df["xc_id"].astype(str).isin(done)]
+    print(f"{len(todo)} new recordings to process ({len(df) - len(todo)} already done).")
 
-output_dir.mkdir(parents=True, exist_ok=True)
-total_chunks = 0
+    output_dir.mkdir(parents=True, exist_ok=True)
+    total_chunks = 0
 
-for i, (_, row) in enumerate(todo.iterrows(), start=1):
-    filepath = Path(row["filepath"])
-    xc_id = str(row["xc_id"])
+    for i, (_, row) in enumerate(todo.iterrows(), start=1):
+        filepath = Path(row["filepath"])
+        xc_id = str(row["xc_id"])
 
-    species_out_dir = output_dir / row["species"].lower().replace(" ", "_")
-    species_out_dir.mkdir(parents=True, exist_ok=True)
+        species_out_dir = output_dir / row["species"].lower().replace(" ", "_")
+        species_out_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        y, _ = librosa.load(filepath, sr=sample_rate, mono=True)
-        y, _ = librosa.effects.trim(y, top_db=30)
-    except Exception as e:
-        print(f"[!] skipping {filepath.name}: {e}")
-        continue  # not marked done, so it is retried next run
+        try:
+            y, _ = librosa.load(filepath, sr=sample_rate, mono=True)
+            y, _ = librosa.effects.trim(y, top_db=30)
+        except Exception as e:
+            print(f"[!] skipping {filepath.name}: {e}")
+            continue  # not marked done, so it is retried next run
 
-    rows = []
-    chunks = slice_audio(y)
-    if chunks:
-        rms_values = [np.sqrt(np.mean(c ** 2)) for c in chunks]
-        max_rms = max(rms_values)
-        for chunk_idx, (chunk, rms) in enumerate(zip(chunks, rms_values)):
-            if rms < min_rms or rms < 0.2 * max_rms:
-                continue
-            out_path = species_out_dir / f"XC{xc_id}_chunk{chunk_idx}.npy"
-            np.save(out_path, log_mel_tensor(chunk))
-            rows.append({
-                "chunk_path": str(out_path),
-                "xc_id": xc_id,
-                "species": row["species"],
-                "label": int(row["label"]),
-            })
+        rows = []
+        chunks = slice_audio(y)
+        if chunks:
+            rms_values = [np.sqrt(np.mean(c ** 2)) for c in chunks]
+            max_rms = max(rms_values)
+            for chunk_idx, (chunk, rms) in enumerate(zip(chunks, rms_values)):
+                if rms < min_rms or rms < 0.2 * max_rms:
+                    continue
+                out_path = species_out_dir / f"XC{xc_id}_chunk{chunk_idx}.npy"
+                np.save(out_path, log_mel_tensor(chunk))
+                rows.append({
+                    "chunk_path": str(out_path),
+                    "xc_id": xc_id,
+                    "species": row["species"],
+                    "label": int(row["label"]),
+                })
 
-    if rows:
-        append_chunks(rows)
-    mark_done(xc_id)  # also marks recordings with 0 usable chunks, so they aren't redone
-    total_chunks += len(rows)
+        if rows:
+            append_chunks(rows)
+        mark_done(xc_id)  # also marks recordings with 0 usable chunks, so they aren't redone
+        total_chunks += len(rows)
 
-    if i % 50 == 0 or i == len(todo):
-        print(f"  Processed {i}/{len(todo)} new files...")
+        if i % 50 == 0 or i == len(todo):
+            print(f"  Processed {i}/{len(todo)} new files...")
 
-print(f"\nDone! Added {total_chunks} spectrogram chunks to {output_metadata}")
+    print(f"\nDone! Added {total_chunks} spectrogram chunks to {output_metadata}")
+
+
+if __name__ == "__main__":
+    main()

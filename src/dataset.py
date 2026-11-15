@@ -19,8 +19,8 @@ class BirdDataset(Dataset):
         return len(self.df)
 
     def _apply_spec_augment(self, spec):
-        spec = spec.copy()
         _, n_mels, n_steps = spec.shape
+        spec = np.roll(spec, np.random.randint(n_steps), axis=2)  # random time shift (returns a copy)
         f = np.random.randint(0, 16)
         if f > 0:
             f0 = np.random.randint(0, n_mels - f)

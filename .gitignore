@@ -4,6 +4,7 @@
 # Data and cache
 data/*
 !data/classes.json
+checkpoints/
 __pycache__/
 *.pyc 
 .DS_Store

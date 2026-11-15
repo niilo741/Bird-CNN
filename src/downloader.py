@@ -27,9 +27,9 @@ species = [
     "Common Wood Pigeon",
     "Goldcrest",
 ]
-countries = ["Finland", "Sweden", "Norway", "Estonia"]
+countries = ["Finland", "Sweden", "Norway", "Estonia", "Denmark", "Latvia", "Lithuania"]
 
-max_per_species = 50  # target TOTAL per species, including recordings already downloaded
+max_per_species = 150  # target TOTAL per species, including recordings already downloaded
 output_dir = Path("data/raw")
 metadata_path = Path("data/metadata.csv")
 FIELDNAMES = ["xc_id", "species", "label", "country", "filepath", "length"]
@@ -85,7 +85,7 @@ for bird in species:
         if have >= max_per_species:
             break
 
-        query = f'en:"={bird}" q:A cnt:{country} len:"5-60"'
+        query = f'en:"={bird}" q:">C" cnt:{country} len:"5-60"'
         for rec in iter_recordings(query):
             if have >= max_per_species:
                 break
