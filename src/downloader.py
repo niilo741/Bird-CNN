@@ -1,14 +1,20 @@
 import os
 import time
 import csv
-import requests
+from collections import Counter
 from pathlib import Path
+
+import pandas as pd
+import requests
 from dotenv import load_dotenv
 
+from src.labels import load_classes, save_classes, get_label
+
 load_dotenv()
-API_KEY = os.environ['API_KEY']
+API_KEY = os.environ["API_KEY"]
 BASE_URL = "https://xeno-canto.org/api/3/recordings"
 
+# Add new species anywhere in this list; their labels come from classes.json, not list order.
 species = [
     "Common Cuckoo",
     "Common Blackbird",
@@ -23,44 +29,71 @@ species = [
 ]
 countries = ["Finland", "Sweden", "Norway", "Estonia"]
 
-max_per_species = 50
+max_per_species = 50  # target TOTAL per species, including recordings already downloaded
 output_dir = Path("data/raw")
 metadata_path = Path("data/metadata.csv")
+FIELDNAMES = ["xc_id", "species", "label", "country", "filepath", "length"]
+
+
+def load_existing():
+    """IDs already in metadata.csv and how many recordings each species has."""
+    if metadata_path.exists():
+        df = pd.read_csv(metadata_path)
+        return set(df["xc_id"].astype(str)), Counter(df["species"])
+    return set(), Counter()
+
+
+def append_rows(rows):
+    new_file = not metadata_path.exists()
+    with open(metadata_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        if new_file:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
+def iter_recordings(query):
+    """Yield recordings from every result page, not just page 1."""
+    page, num_pages = 1, 1
+    while page <= num_pages:
+        response = requests.get(
+            BASE_URL, params={"key": API_KEY, "query": query, "page": page}, timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        num_pages = int(data.get("numPages", 1))
+        yield from data.get("recordings", [])
+        page += 1
+        time.sleep(1.1)
+
 
 output_dir.mkdir(parents=True, exist_ok=True)
-metadata = []
+classes = load_classes()
+known_ids, counts = load_existing()
 
-for label, bird in enumerate(species):
-    folder_name = bird.lower().replace(" ", "_")
-    bird_dir = output_dir / folder_name
+for bird in species:
+    label = get_label(bird, classes)
+    save_classes(classes)
+
+    bird_dir = output_dir / bird.lower().replace(" ", "_")
     bird_dir.mkdir(parents=True, exist_ok=True)
 
-    downloaded_count = 0
-    seen_ids = set()
+    have = counts[bird]
+    new_rows = []
 
     for country in countries:
-        if downloaded_count >= max_per_species:
+        if have >= max_per_species:
             break
 
         query = f'en:"={bird}" q:A cnt:{country} len:"5-60"'
-        params = {
-            "key": API_KEY,
-            "query": query,
-            "page": 1,
-        }
-
-        response = requests.get(BASE_URL, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-
-        for rec in data.get("recordings", []):
-            if downloaded_count >= max_per_species:
+        for rec in iter_recordings(query):
+            if have >= max_per_species:
                 break
 
-            xc_id = rec["id"]
-            if xc_id in seen_ids or not rec.get("file"):
+            xc_id = str(rec["id"])
+            if xc_id in known_ids or not rec.get("file"):
                 continue
-            seen_ids.add(xc_id)
+            known_ids.add(xc_id)
 
             file_url = rec["file"]
             if file_url.startswith("//"):
@@ -75,7 +108,7 @@ for label, bird in enumerate(species):
                 dest_path.write_bytes(audio_response.content)
                 time.sleep(1.1)
 
-            metadata.append({
+            new_rows.append({
                 "xc_id": xc_id,
                 "species": bird,
                 "label": label,
@@ -83,15 +116,8 @@ for label, bird in enumerate(species):
                 "filepath": str(dest_path),
                 "length": rec.get("length", ""),
             })
-            downloaded_count += 1
+            have += 1
 
-        time.sleep(1.1)
-
-    print(f"{bird}: total {downloaded_count} recordings ready.")
-
-if metadata:
-    with open(metadata_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=metadata[0].keys())
-        writer.writeheader()
-        writer.writerows(metadata)
-    print(f"\nSaved metadata for {len(metadata)} files to {metadata_path}")
+    if new_rows:
+        append_rows(new_rows)  # saved per species, so a crash doesn't lose earlier work
+    print(f"{bird}: +{len(new_rows)} new, {have} total.")

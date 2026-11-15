@@ -1,12 +1,15 @@
-import librosa
 import csv
-import numpy as np
 from pathlib import Path
+
+import librosa
+import numpy as np
 import pandas as pd
 
 input_metadata = Path("data/metadata.csv")
 output_dir = Path("data/processed")
 output_metadata = Path("data/processed_metadata.csv")
+processed_ids_path = Path("data/processed_ids.txt")  # recordings already handled
+FIELDNAMES = ["chunk_path", "xc_id", "species", "label"]
 
 sample_rate = 22050
 chunk_seconds = 5
@@ -17,92 +20,104 @@ min_rms = 0.003
 
 n_mels = 128
 n_fft = 2048
-hop_lenght = 512
+hop_length = 512
 fmax = 10000
 
-# Defining a function to split audio into 5-second chunks
+
 def slice_audio(y):
     chunks = []
-    min_tail_samples = int(min_tail_seconds*sample_rate)
-
+    min_tail_samples = int(min_tail_seconds * sample_rate)
     for start in range(0, len(y), hop_samples):
         chunk = y[start : start + chunk_samples]
-
         if len(chunk) == chunk_samples:
             chunks.append(chunk)
         elif len(chunk) >= min_tail_samples:
-            padded = np.pad(chunk, (0, chunk_samples - len(chunk)))
-            chunks.append(padded)
+            chunks.append(np.pad(chunk, (0, chunk_samples - len(chunk))))
             break
         else:
             break
     return chunks
 
-# Defining function to convert a 5-second waveform into a normalized (1,128,216) float32 array
+
 def log_mel_tensor(chunk):
-   
-    mel = librosa.feature.melspectrogram(y=chunk, sr=sample_rate, n_fft=n_fft, hop_length=hop_lenght, n_mels=n_mels, fmax=fmax)
-    
+    mel = librosa.feature.melspectrogram(
+        y=chunk, sr=sample_rate, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels, fmax=fmax
+    )
     log_mel = librosa.power_to_db(mel, ref=np.max)
     log_mel = (log_mel - log_mel.mean()) / (log_mel.std() + 1e-6)
-
     return log_mel[np.newaxis, :, :].astype(np.float32)
 
-# Loading metadata
+
+def load_done_ids():
+    if processed_ids_path.exists():
+        return set(processed_ids_path.read_text().split())
+    if output_metadata.exists():
+        # First run after this change: treat everything already in processed_metadata.csv as done.
+        ids = set(pd.read_csv(output_metadata)["xc_id"].astype(str))
+        processed_ids_path.write_text("".join(f"{i}\n" for i in sorted(ids)))
+        return ids
+    return set()
+
+
+def append_chunks(rows):
+    new_file = not output_metadata.exists()
+    with open(output_metadata, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        if new_file:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
+def mark_done(xc_id):
+    with open(processed_ids_path, "a") as f:
+        f.write(f"{xc_id}\n")
+
+
 df = pd.read_csv(input_metadata)
+done = load_done_ids()
+todo = df[~df["xc_id"].astype(str).isin(done)]
+print(f"{len(todo)} new recordings to process ({len(df) - len(todo)} already done).")
+
 output_dir.mkdir(parents=True, exist_ok=True)
-processed_rows = []
+total_chunks = 0
 
-print(f'Processing {len(df)} recordings...')
+for i, (_, row) in enumerate(todo.iterrows(), start=1):
+    filepath = Path(row["filepath"])
+    xc_id = str(row["xc_id"])
 
-for idx, row in df.iterrows():
-    filepath = Path(row['filepath'])
-    species = row['species']
-    label = row['label']
-    xc_id = row['xc_id']
-
-    folder_name = species.lower().replace(" ", "_")
-    species_out_dir = output_dir / folder_name
+    species_out_dir = output_dir / row["species"].lower().replace(" ", "_")
     species_out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         y, _ = librosa.load(filepath, sr=sample_rate, mono=True)
         y, _ = librosa.effects.trim(y, top_db=30)
     except Exception as e:
-        print(f'[!] skipping {filepath.name}: {e}')
+        print(f"[!] skipping {filepath.name}: {e}")
+        continue  # not marked done, so it is retried next run
 
+    rows = []
     chunks = slice_audio(y)
-    if not chunks:
-        continue
+    if chunks:
+        rms_values = [np.sqrt(np.mean(c ** 2)) for c in chunks]
+        max_rms = max(rms_values)
+        for chunk_idx, (chunk, rms) in enumerate(zip(chunks, rms_values)):
+            if rms < min_rms or rms < 0.2 * max_rms:
+                continue
+            out_path = species_out_dir / f"XC{xc_id}_chunk{chunk_idx}.npy"
+            np.save(out_path, log_mel_tensor(chunk))
+            rows.append({
+                "chunk_path": str(out_path),
+                "xc_id": xc_id,
+                "species": row["species"],
+                "label": int(row["label"]),
+            })
 
-    # Calculate loudness (RMS) for each chunk to filter out silence
-    rms_values = [np.sqrt(np.mean(c ** 2)) for c in chunks]
-    max_rms = max(rms_values)
+    if rows:
+        append_chunks(rows)
+    mark_done(xc_id)  # also marks recordings with 0 usable chunks, so they aren't redone
+    total_chunks += len(rows)
 
-    # 3 & 4. Filter silent chunks and save spectrograms
-    saved_count = 0
-    for chunk_idx, (chunk, rms) in enumerate(zip(chunks, rms_values)):
-        if rms < min_rms or rms < 0.2 * max_rms:
-            continue
+    if i % 50 == 0 or i == len(todo):
+        print(f"  Processed {i}/{len(todo)} new files...")
 
-        spec_tensor = log_mel_tensor(chunk)
-        out_path = species_out_dir / f"XC{xc_id}_chunk{chunk_idx}.npy"
-        np.save(out_path, spec_tensor)
-
-        processed_rows.append({
-            "chunk_path": str(out_path),
-            "xc_id": xc_id,
-            "species": species,
-            "label": label})
-        saved_count += 1
-
-    if (idx + 1) % 50 == 0 or (idx + 1) == len(df):
-        print(f"  Processed {idx + 1}/{len(df)} files...")
-
-    # Save index for PyTorch Dataset and train/val splitting
-    if processed_rows:
-        with open(output_metadata, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=processed_rows[0].keys())
-            writer.writeheader()
-            writer.writerows(processed_rows)
-        print(f"\nDone! Saved {len(processed_rows)} spectrogram chunks to {output_metadata}")
+print(f"\nDone! Added {total_chunks} spectrogram chunks to {output_metadata}")

@@ -2,7 +2,8 @@
 .env
 
 # Data and cache
-data/
+data/*
+!data/classes.json
 __pycache__/
 *.pyc 
 .DS_Store
