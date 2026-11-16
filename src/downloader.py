@@ -27,9 +27,11 @@ species = [
     "Common Wood Pigeon",
     "Goldcrest",
 ]
-countries = ["Finland", "Sweden", "Norway", "Estonia", "Denmark", "Latvia", "Lithuania"]
+countries = ["Finland", "Sweden", "Norway", "Estonia", "Denmark", "Latvia", "Lithuania", "Germany", "Poland"]
 
 max_per_species = 150  # target TOTAL per species, including recordings already downloaded
+# Higher targets for species the model confuses most; raise or add entries as needed.
+species_targets = {"Common Blackbird": 300, "Great Spotted Woodpecker": 300}
 output_dir = Path("data/raw")
 metadata_path = Path("data/metadata.csv")
 FIELDNAMES = ["xc_id", "species", "label", "country", "filepath", "length"]
@@ -79,15 +81,16 @@ for bird in species:
     bird_dir.mkdir(parents=True, exist_ok=True)
 
     have = counts[bird]
+    target = species_targets.get(bird, max_per_species)
     new_rows = []
 
     for country in countries:
-        if have >= max_per_species:
+        if have >= target:
             break
 
         query = f'en:"={bird}" q:">C" cnt:{country} len:"5-60"'
         for rec in iter_recordings(query):
-            if have >= max_per_species:
+            if have >= target:
                 break
 
             xc_id = str(rec["id"])
