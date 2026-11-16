@@ -22,6 +22,33 @@ Downloading recordings needs a Xeno-canto API key (free, from your Xeno-canto ac
 API_KEY=your-key-here
 ```
 
+## Try the pretrained model
+
+You can test the model without downloading data or training. No API key is needed for this.
+
+1. Download `best.zip` from the [latest release](https://github.com/niilo741/Bird-CNN/releases/latest).
+2. Unzip it into a `checkpoints` folder in the project root:
+
+   ```bash
+   unzip ~/Downloads/best.zip -d checkpoints
+   ```
+
+3. Run it on a recording (mp3 or wav, at least 2 seconds long):
+
+   ```bash
+   python -m src.predict path/to/audio.mp3
+   ```
+
+It prints the three most likely species with their probabilities:
+
+```
+ 86.5%  Great Tit
+  5.4%  Common Blackbird
+  1.9%  Common Wood Pigeon
+```
+
+The pretrained model was trained on Xeno-canto recordings from Northern Europe and gets about 93 % of unseen test recordings right.
+
 ## Usage
 
 Run every command from the project root, as a module (`python -m src.<name>`).
