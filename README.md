@@ -93,3 +93,11 @@ Species labels are permanent and each recording always stays in the same train/v
 | [src/train.py](src/train.py) | Training, fine-tuning and the test report |
 | [src/predict.py](src/predict.py) | Species prediction for one audio file |
 | [src/labels.py](src/labels.py), [src/splits.py](src/splits.py), [src/checkpoint.py](src/checkpoint.py) | Permanent labels, fixed data splits, checkpoint saving and loading |
+
+## Credits and licence
+
+The code is released under the [MIT License](LICENSE).
+
+All recordings used for training come from [Xeno-canto](https://xeno-canto.org) and were made by its many contributing recordists. They are shared under Creative Commons licences, many of which allow non-commercial use only. The recordings themselves are not part of this repository; the download script fetches them from Xeno-canto with your own API key.
+
+The pretrained model was trained on those recordings and is provided for non-commercial use.
